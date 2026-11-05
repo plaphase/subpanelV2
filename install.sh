@@ -18,8 +18,8 @@ trap cleanup EXIT
 
 ARCHIVE="$INSTALL_ROOT/source.tar.gz"
 SOURCE_DIR="$INSTALL_ROOT/source"
-RELEASE_REF="${MULTISUB_PANEL_REF:-v2.0.0}"
-ARCHIVE_URL="https://github.com/plaphase/subpanelV2/archive/refs/heads/${RELEASE_REF}.tar.gz"
+RELEASE_REF="${MULTISUB_PANEL_REF:-58f8f9844c8e7d282532aee4ef278cdeb0b7d08e}"
+ARCHIVE_URL="https://github.com/plaphase/subpanelV2/archive/${RELEASE_REF}.tar.gz"
 
 printf '[INFO] Загружаю MultiSub Panel…\n'
 curl --fail --location --silent --show-error --retry 3 \

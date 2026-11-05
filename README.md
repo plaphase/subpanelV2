@@ -7,7 +7,7 @@
 Запусти на новом сервере одной командой:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/plaphase/subpanelV2/v2.0.0/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/plaphase/subpanelV2/58f8f9844c8e7d282532aee4ef278cdeb0b7d08e/install.sh | sudo bash
 ```
 
 В меню выбери один из вариантов:
@@ -53,7 +53,7 @@ sudo journalctl -u multisub-panel -f
 
 ## Обновление
 
-Установщик предназначен для новой установки. Для обновления сначала сделай резервную копию `/var/lib/multisub-panel` и `/etc/multisub-panel`, затем обнови приложение и перезапусти службу. Указание `MULTISUB_PANEL_REF` позволяет выбрать другую ветку/версию при запуске bootstrap-скрипта.
+Установщик предназначен для новой установки. Для обновления сначала сделай резервную копию `/var/lib/multisub-panel` и `/etc/multisub-panel`, затем обнови приложение и перезапусти службу. Bootstrap по умолчанию закреплён за опубликованным commit SHA; `MULTISUB_PANEL_REF` позволяет выбрать другой commit, tag или branch.
 
 ## Безопасность и эксплуатация
 
