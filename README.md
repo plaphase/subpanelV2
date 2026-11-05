@@ -7,7 +7,7 @@
 Запусти на новом сервере одной командой:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/plaphase/subpanelV2/58f8f9844c8e7d282532aee4ef278cdeb0b7d08e/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/plaphase/subpanelV2/main/install.sh | sudo bash
 ```
 
 В меню выбери один из вариантов:
