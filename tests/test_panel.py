@@ -142,12 +142,13 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(self.read_json("users.json"), {})
 
     def test_login_rejects_external_redirect(self):
-        login_page = self.client.get("/login")
+        client = self.panel.app.test_client()
+        login_page = client.get("/login")
         token = re.search(
             r'name="csrf_token" value="([^"]+)"',
             login_page.get_data(as_text=True),
         ).group(1)
-        response = self.client.post(
+        response = client.post(
             "/login",
             data={
                 "username": "testadmin",
@@ -160,23 +161,24 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(response.headers["Location"], "/")
 
     def test_login_rate_limit(self):
-        self.client.get("/login")
+        client = self.panel.app.test_client()
+        client.get("/login")
         for _ in range(5):
-            login_page = self.client.get("/login")
+            login_page = client.get("/login")
             token = re.search(
                 r'name="csrf_token" value="([^"]+)"',
                 login_page.get_data(as_text=True),
             ).group(1)
-            self.client.post(
+            client.post(
                 "/login",
                 data={"username": "testadmin", "password": "wrong", "csrf_token": token},
             )
-        login_page = self.client.get("/login")
+        login_page = client.get("/login")
         token = re.search(
             r'name="csrf_token" value="([^"]+)"',
             login_page.get_data(as_text=True),
         ).group(1)
-        response = self.client.post(
+        response = client.post(
             "/login",
             data={"username": "testadmin", "password": "Test-Only-Password", "csrf_token": token},
         )

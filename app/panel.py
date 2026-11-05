@@ -338,8 +338,8 @@ def login():
             return render_template("login.html", error="Слишком много попыток. Подожди 15 минут.", next=""), 429
 
         if (
-            secrets.compare_digest(username, PANEL_USERNAME)
-            and secrets.compare_digest(password, PANEL_PASSWORD)
+            hmac.compare_digest(username.encode("utf-8"), PANEL_USERNAME.encode("utf-8"))
+            and hmac.compare_digest(password.encode("utf-8"), PANEL_PASSWORD.encode("utf-8"))
         ):
             session.clear()
             session["authenticated"] = True
