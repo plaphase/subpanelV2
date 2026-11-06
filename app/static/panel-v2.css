@@ -57,3 +57,27 @@ body.panel-shell .container{width:calc(100vw - 269px)!important;max-width:none!i
   body.panel-shell .user-card-item{width:100%;max-width:none}
   body.panel-shell .source-row,body.panel-shell .row{min-width:0}
 }
+
+/* iOS safe-area and compact diagnostic rows. */
+@media (max-width:700px){
+  body.panel-shell .container{padding-top:calc(14px + env(safe-area-inset-top))!important}
+  .mobile-tabbar .mr-text,.mobile-more-panel .mr-text,.mobile-logout .mr-text{display:inline!important}
+  body.panel-shell .row{
+    grid-template-columns:30px minmax(0,1fr) 105px!important;
+    grid-template-rows:auto auto auto;
+    align-items:center;
+    column-gap:8px!important;
+    row-gap:5px!important;
+    padding:12px 10px!important;
+  }
+  body.panel-shell .row .node{grid-column:1;grid-row:1/4;align-self:start}
+  body.panel-shell .row>div:nth-child(2){grid-column:2;grid-row:1;min-width:0}
+  body.panel-shell .row>div:nth-child(3){display:none!important}
+  body.panel-shell .row .badge{grid-column:2;grid-row:2;justify-self:start}
+  body.panel-shell .row .ms{grid-column:2;grid-row:3;margin:0}
+  body.panel-shell .row .check-source{
+    grid-column:3;grid-row:1/4;align-self:center;
+    width:100%;min-width:0;padding:8px 5px!important;
+    font-size:12px!important;white-space:normal;line-height:1.2;
+  }
+}
