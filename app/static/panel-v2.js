@@ -13,6 +13,8 @@
       : path === '/bulk' ? '/bulk'
         : path === '/logs' ? '/logs'
           : path === '/trash' ? '/trash' : '/';
+  const linkMarkup = (href, icon, label, current = active) =>
+    `<a href="${href}" class="${href === current ? 'active' : ''}"><span class="mr-icon">${icon}</span><span class="mr-text">${label}</span></a>`;
 
   const rail = document.createElement('aside');
   rail.id = 'multi-rail';
@@ -31,24 +33,75 @@
       <button type="button" id="mr-search"><span class="mr-icon">⌕</span><span class="mr-text">Поиск по панели</span></button>
       <a href="/sources"><span class="mr-icon">⟳</span><span class="mr-text">Проверить VPS</span></a>
     </nav>
-    <div class="mr-account"><form method="post" action="/logout">
-      <input type="hidden" name="csrf_token">
-      <button type="submit"><span class="mr-icon">↪</span><span class="mr-text">Выйти</span></button>
-    </form></div>
+    <div class="mr-account"><form method="post" action="/logout"><input type="hidden" name="csrf_token"><button type="submit"><span class="mr-icon">↪</span><span class="mr-text">Выйти</span></button></form></div>
     <div class="mr-bottom"><div class="mr-health" id="mr-health"><i></i>Панель в норме<small>Проверяю соединение…</small></div></div>`;
 
   document.body.classList.add('panel-shell');
   document.body.prepend(rail);
+  let viewport = document.querySelector('meta[name="viewport"]');
+  if (!viewport) {
+    viewport = document.createElement('meta');
+    viewport.name = 'viewport';
+    document.head.append(viewport);
+  }
+  viewport.content = 'width=device-width,initial-scale=1,viewport-fit=cover';
   rail.querySelector('.mr-account input[name="csrf_token"]').value =
     document.querySelector('meta[name="csrf-token"]')?.content || '';
 
-  document.getElementById('mr-search')?.addEventListener('click', () => {
+  const searchPanel = () => {
     const field = document.querySelector('#userSearch,#searchInput');
     if (field) {
       field.focus();
       field.scrollIntoView({ behavior: 'smooth', block: 'center' });
     } else {
       location.href = '/?focus=search';
+    }
+  };
+  document.getElementById('mr-search')?.addEventListener('click', searchPanel);
+
+  const mobile = document.createElement('div');
+  mobile.id = 'mobile-navigation';
+  mobile.innerHTML = `
+    <section class="mobile-more-panel" id="mobile-more-panel" hidden>
+      <div class="mobile-more-heading">Быстрый переход</div>
+      ${linkMarkup('/bulk', '⊞', 'Массовые действия')}
+      ${linkMarkup('/logs', '⌁', 'Журнал')}
+      ${linkMarkup('/trash', '⌫', 'Корзина')}
+      ${linkMarkup('/user/new', '＋', 'Новый пользователь')}
+      <button type="button" id="mobile-search"><span class="mr-icon">⌕</span>Поиск по панели</button>
+      <div class="mobile-logout"></div>
+    </section>
+    <nav class="mobile-tabbar" aria-label="Основная навигация">
+      ${linkMarkup('/dashboard', '◈', 'Обзор')}
+      ${linkMarkup('/', '♙', 'Пользователи')}
+      ${linkMarkup('/sources', '⌘', 'Источники')}
+      <button type="button" id="mobile-more" aria-expanded="false"><span class="mobile-tab-icon">···</span><span>Ещё</span></button>
+    </nav>`;
+  document.body.append(mobile);
+  const logoutForm = rail.querySelector('.mr-account form').cloneNode(true);
+  logoutForm.querySelector('input[name="csrf_token"]').value =
+    document.querySelector('meta[name="csrf-token"]')?.content || '';
+  mobile.querySelector('.mobile-logout').append(logoutForm);
+  mobile.querySelector('#mobile-search').addEventListener('click', () => {
+    mobile.querySelector('#mobile-more-panel').hidden = true;
+    mobile.querySelector('#mobile-more').setAttribute('aria-expanded', 'false');
+    searchPanel();
+  });
+  mobile.querySelector('#mobile-more').addEventListener('click', (event) => {
+    const panel = mobile.querySelector('#mobile-more-panel');
+    panel.hidden = !panel.hidden;
+    event.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
+  });
+  document.addEventListener('click', (event) => {
+    if (!mobile.contains(event.target)) {
+      mobile.querySelector('#mobile-more-panel').hidden = true;
+      mobile.querySelector('#mobile-more').setAttribute('aria-expanded', 'false');
+    }
+  });
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      mobile.querySelector('#mobile-more-panel').hidden = true;
+      mobile.querySelector('#mobile-more').setAttribute('aria-expanded', 'false');
     }
   });
 

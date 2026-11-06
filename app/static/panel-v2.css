@@ -9,3 +9,51 @@ body.panel-shell .favorite-form{display:inline-flex}body.panel-shell .favorite-b
 @media(max-width:850px){body.panel-shell .container{width:calc(100% - 205px)!important;margin-left:190px!important;margin-right:15px!important}.mr-brand{padding-left:3px}.mr-nav a,.mr-nav button{font-size:10px}}
 @media(max-width:650px){#multi-rail{width:58px;padding:14px 7px}.mr-brand{padding:0 0 20px}.mr-brand>div:last-child,.mr-label,.mr-text,.mr-count,.mr-bottom{display:none}.mr-logo{width:42px;height:42px}.mr-nav a,.mr-nav button{justify-content:center;padding:0}.mr-icon{font-size:16px}body.panel-shell .container{width:calc(100% - 78px)!important;margin:0 10px 0 68px!important;padding-top:14px!important}body.panel-shell .header{align-items:flex-start;flex-wrap:wrap;margin-bottom:18px}.header-actions{flex-wrap:wrap}.header-button-text{display:none!important}}
 #multi-rail .mr-account{margin-top:10px;padding-top:10px;border-top:1px solid #1c2b3f}#multi-rail .mr-account form{margin:0}#multi-rail .mr-account button{height:38px;display:flex;align-items:center;gap:10px;width:100%;border:1px solid transparent;border-radius:10px;background:transparent;color:#90a2bb;padding:0 10px;text-align:left;font:600 11px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;cursor:pointer}#multi-rail .mr-account button:hover{background:#251722;color:#ff9da8}#multi-rail .mr-account button:hover .mr-icon{color:#ff9da8}
+
+/* Fluid layout for wide screens and touch-first mobile navigation. */
+body.panel-shell .container{width:calc(100vw - 269px)!important;max-width:none!important;margin:0 24px 0 245px!important;padding-top:27px!important}
+#mobile-navigation{display:none}
+@media (min-width:1800px){body.panel-shell .container{width:calc(100vw - 293px)!important;max-width:none!important}}
+@media (min-width:701px) and (max-width:1050px){
+  #multi-rail{width:70px;padding:16px 8px}
+  #multi-rail .mr-brand{padding:0 6px 20px}
+  #multi-rail .mr-brand>div:last-child,#multi-rail .mr-label,#multi-rail .mr-text,#multi-rail .mr-count,#multi-rail .mr-bottom{display:none}
+  #multi-rail .mr-logo{width:42px;height:42px}
+  #multi-rail .mr-nav a,#multi-rail .mr-nav button,#multi-rail .mr-account button{justify-content:center;padding:0}
+  #multi-rail .mr-icon{font-size:16px}
+  body.panel-shell .container{width:calc(100vw - 106px)!important;margin:0 16px 0 90px!important;padding-top:20px!important}
+}
+@media (max-width:700px){
+  html,body{min-height:100%;overflow-x:hidden}
+  body.panel-shell #multi-rail{display:none}
+  body.panel-shell .container{width:calc(100vw - 28px)!important;max-width:none!important;margin:0 14px!important;padding:14px 0 calc(96px + env(safe-area-inset-bottom))!important}
+  #mobile-navigation{display:block;position:relative;z-index:300}
+  .mobile-tabbar{position:fixed;z-index:302;inset:auto 0 0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:3px;padding:7px 8px calc(7px + env(safe-area-inset-bottom));border-top:1px solid #26364c;background:#0b1320f5;backdrop-filter:blur(18px)}
+  .mobile-tabbar a,.mobile-tabbar button{min-width:0;min-height:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border:0;border-radius:10px;background:transparent;color:#92a2b8;text-decoration:none;font:600 10px/1.2 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  .mobile-tabbar a.active{background:#162436;color:#eaf2ff}
+  .mobile-tabbar .mr-icon,.mobile-tab-icon{width:auto;font-size:17px;line-height:1;color:#72dfd2}
+  .mobile-tabbar button[aria-expanded="true"]{background:#162436;color:#fff}
+  .mobile-more-panel{position:fixed;z-index:301;right:10px;bottom:calc(68px + env(safe-area-inset-bottom));width:min(320px,calc(100vw - 20px));max-height:min(70vh,520px);overflow-y:auto;padding:12px;border:1px solid #2a3b54;border-radius:16px;background:#101a29f7;box-shadow:0 18px 55px #0009;backdrop-filter:blur(20px)}
+  .mobile-more-panel[hidden]{display:none}
+  .mobile-more-heading{padding:4px 8px 10px;color:#7489a5;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase}
+  .mobile-more-panel>a,.mobile-more-panel>button,.mobile-logout button{width:100%;min-height:44px;display:flex;align-items:center;gap:11px;padding:0 10px;border:0;border-radius:10px;background:transparent;color:#dce7f5;text-decoration:none;text-align:left;font:600 13px Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+  .mobile-more-panel>a:hover,.mobile-more-panel>button:hover{background:#1b2a3d}
+  .mobile-more-panel .mr-icon{width:22px;color:#72dfd2;font-size:17px}
+  .mobile-logout{margin-top:8px;padding-top:8px;border-top:1px solid #26364c}
+  .mobile-logout form{margin:0}
+  .mobile-logout button{color:#ff9da8;cursor:pointer}
+  .mobile-logout .mr-icon{color:#ff9da8}
+  body.panel-shell .header,body.panel-shell .head{align-items:flex-start;flex-wrap:wrap;gap:12px;margin-bottom:18px}
+  body.panel-shell .header h1,body.panel-shell .head h1,body.panel-shell h1{font-size:clamp(22px,6vw,30px);line-height:1.15}
+  body.panel-shell .header-actions,body.panel-shell .actions{width:100%;display:flex;flex-wrap:wrap;gap:8px}
+  body.panel-shell .stats{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px}
+  body.panel-shell .stat{min-width:0;padding:12px}
+  body.panel-shell .grid,body.panel-shell .cols{grid-template-columns:minmax(0,1fr)!important}
+  body.panel-shell input,body.panel-shell select,body.panel-shell textarea{min-width:0;max-width:100%;font-size:16px!important}
+  body.panel-shell button,body.panel-shell .btn,body.panel-shell .header-button{min-height:42px}
+  body.panel-shell table{display:block;max-width:100%;overflow-x:auto}
+  body.panel-shell .toolbar,body.panel-shell .filters,body.panel-shell .search-row{flex-wrap:wrap;gap:8px}
+  body.panel-shell .toolbar>*,body.panel-shell .filters>*{max-width:100%}
+  body.panel-shell .user-card-item{width:100%;max-width:none}
+  body.panel-shell .source-row,body.panel-shell .row{min-width:0}
+}
