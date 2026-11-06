@@ -303,6 +303,9 @@ def require_login():
         expected = session.get("_csrf_token", "")
         supplied = request.form.get("csrf_token", "") or request.headers.get("X-CSRFToken", "")
         if not expected or not supplied or not hmac.compare_digest(expected, supplied):
+            if request.endpoint == "login" and not session.get("authenticated"):
+                session.clear()
+                return redirect(url_for("login", expired="1"), code=303)
             abort(400, description="CSRF token is missing or invalid.")
 
     if request.endpoint in public_endpoints:
@@ -320,7 +323,7 @@ def add_security_headers(response):
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     if request.is_secure:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
-    if session.get("authenticated"):
+    if session.get("authenticated") or request.endpoint == "login":
         response.headers.setdefault("Cache-Control", "no-store")
     return response
 
@@ -330,7 +333,11 @@ def login():
     if session.get("authenticated"):
         return redirect(url_for("index"))
 
-    error = None
+    error = (
+        "Форма входа устарела. Обнови данные и попробуй ещё раз."
+        if request.args.get("expired") == "1"
+        else None
+    )
 
     if request.method == "POST":
         username = request.form.get("username", "")
