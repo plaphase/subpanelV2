@@ -168,7 +168,7 @@ class PanelTests(unittest.TestCase):
 
         fake_response = MagicMock()
         fake_response.status_code = 200
-        fake_response.iter_content.return_value = [b"ok"]
+        fake_response.iter_content.return_value = iter([b"ok"])
         fake_response.__enter__.return_value = fake_response
         with patch.object(self.panel, "_public_source_host", return_value=True), patch.object(
             self.panel.requests, "get", return_value=fake_response
