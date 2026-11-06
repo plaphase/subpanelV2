@@ -56,7 +56,14 @@ require_marker() {
 }
 
 show_status() {
+    printf 'Адрес панели: %s\n' "$(panel_url)"
     systemctl status --no-pager --full multisub-panel.service || true
+}
+
+panel_url() {
+    local url
+    url="$(sed -n 's/^PANEL_PUBLIC_URL=//p' "$CONFIG_DIR/panel.env" | head -n1)"
+    printf '%s' "${url:-не указан в конфигурации}"
 }
 
 health_check() {
@@ -277,6 +284,7 @@ esac
 
 while true; do
     printf '\n=== MultiSub Panel ===\n'
+    printf 'Ссылка панели: %s\n' "$(panel_url)"
     printf '1) Статус службы\n'
     printf '2) Проверить работоспособность\n'
     printf '3) Сменить логин и пароль администратора\n'
@@ -287,8 +295,8 @@ while true; do
     case "$choice" in
         1) show_status ;;
         2) health_check || true ;;
-        3) change_credentials ;;
-        4) uninstall_panel ;;
+        3) (change_credentials) || true ;;
+        4) (uninstall_panel) && exit 0 || true ;;
         0) exit 0 ;;
         *) printf 'Выбери 0, 1, 2, 3 или 4.\n' ;;
     esac
