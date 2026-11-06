@@ -34,6 +34,7 @@ done
 [[ -d "$SOURCE_DIR/app" && ! -L "$SOURCE_DIR/app" ]] || fail "Каталог app отсутствует или является символической ссылкой."
 [[ -d "$SOURCE_DIR/templates" && ! -L "$SOURCE_DIR/templates" ]] || fail "Каталог templates отсутствует или является символической ссылкой."
 [[ -f "$SOURCE_DIR/app/panel.py" && ! -L "$SOURCE_DIR/app/panel.py" ]] || fail "Файл app/panel.py отсутствует или является символической ссылкой."
+[[ -d "$SOURCE_DIR/app/static" && ! -L "$SOURCE_DIR/app/static" ]] || fail "Каталог app/static отсутствует или является символической ссылкой."
 [[ -f "$SOURCE_DIR/requirements.txt" && ! -L "$SOURCE_DIR/requirements.txt" ]] || fail "Файл requirements.txt отсутствует или является символической ссылкой."
 [[ -f "$SOURCE_DIR/installer/run-panel.sh" && ! -L "$SOURCE_DIR/installer/run-panel.sh" ]] || fail "Файл run-panel.sh отсутствует или является символической ссылкой."
 
@@ -65,14 +66,23 @@ TEMPLATES=("$SOURCE_DIR/templates/"*.html)
 for template in "${TEMPLATES[@]}"; do
     [[ -f "$template" && ! -L "$template" ]] || fail "Некорректный HTML-шаблон: $template"
 done
+STATIC_ASSETS=("$SOURCE_DIR/app/static/"*)
+((${#STATIC_ASSETS[@]} > 0)) || fail "В app/static не найдены ресурсы интерфейса."
+for asset in "${STATIC_ASSETS[@]}"; do
+    [[ -f "$asset" && ! -L "$asset" ]] || fail "Некорректный статический ресурс: $asset"
+done
 shopt -u nullglob
 
 info "Подготовка установки в $APP_DIR"
 
 install -d -o root -g root -m 0755 "$APP_DIR"
 install -d -o root -g root -m 0755 "$APP_DIR/app"
+install -d -o root -g root -m 0755 "$APP_DIR/app/static"
 install -d -o root -g root -m 0755 "$APP_DIR/templates"
 install -m 0644 "$SOURCE_DIR/app/panel.py" "$APP_DIR/app/panel.py"
+for asset in "${STATIC_ASSETS[@]}"; do
+    install -m 0644 "$asset" "$APP_DIR/app/static/"
+done
 install -m 0644 "$SOURCE_DIR/requirements.txt" "$APP_DIR/requirements.txt"
 for template in "${TEMPLATES[@]}"; do
     install -m 0644 "$template" "$APP_DIR/templates/"

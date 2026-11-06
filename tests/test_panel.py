@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 PROJECT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_DIR / "app"))
@@ -140,6 +140,48 @@ class PanelTests(unittest.TestCase):
         response = self.client.post("/user/create", data={"name": "Blocked"})
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.read_json("users.json"), {})
+
+    def test_dashboard_and_favorite_toggle(self):
+        token = "c" * 48
+        (self.data_dir / "users.json").write_text(
+            json.dumps({token: {"name": "Pinned", "enabled": True, "sources": [], "favorite": False}}),
+            encoding="utf-8",
+        )
+        dashboard = self.client.get("/dashboard")
+        self.assertEqual(dashboard.status_code, 200)
+        self.assertIn("Сеть под контролем", dashboard.get_data(as_text=True))
+
+        response = self.post(f"/user/{token}/favorite")
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(self.read_json("users.json")[token]["favorite"])
+
+    def test_source_health_check_is_authenticated_and_persisted(self):
+        token = "d" * 48
+        source = "https://example.com/private-token-path"
+        (self.data_dir / "users.json").write_text(
+            json.dumps({token: {"name": "Source User", "enabled": True, "sources": [source]}}),
+            encoding="utf-8",
+        )
+        page = self.client.get("/sources")
+        self.assertEqual(page.status_code, 200)
+        self.assertNotIn("private-token-path", page.get_data(as_text=True))
+
+        fake_response = MagicMock()
+        fake_response.status_code = 200
+        fake_response.iter_content.return_value = [b"ok"]
+        fake_response.__enter__.return_value = fake_response
+        with patch.object(self.panel, "_public_source_host", return_value=True), patch.object(
+            self.panel.requests, "get", return_value=fake_response
+        ) as get_source:
+            response = self.post("/sources/check")
+
+        self.assertEqual(response.status_code, 200)
+        result = response.get_json()
+        self.assertEqual(result["checked"], 1)
+        key = self.panel.source_key(source)
+        self.assertEqual(result["results"][key]["status"], "ok")
+        self.assertEqual(self.read_json("source-health.json")[key]["http_status"], 200)
+        get_source.assert_called_once()
 
     def test_login_rejects_external_redirect(self):
         client = self.panel.app.test_client()

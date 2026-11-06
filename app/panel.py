@@ -11,6 +11,9 @@ import socket
 import tempfile
 import threading
 import time
+import hashlib
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from functools import wraps
 from urllib.parse import urlsplit
 import requests
@@ -40,6 +43,7 @@ LOG_FILE = Path(
 ).expanduser()
 STATE_LOCK_FILE = BASE_DIR / ".panel-state.lock"
 LOGIN_DB_FILE = BASE_DIR / ".panel-login.sqlite3"
+SOURCE_HEALTH_FILE = BASE_DIR / "source-health.json"
 
 SUBSCRIPTION_BASE_URL = os.environ.get(
     "SUBSCRIPTION_BASE_URL", ""
@@ -392,6 +396,59 @@ def save_trash(trash):
     _atomic_save_json(TRASH_FILE, trash)
 
 
+def load_source_health():
+    if not SOURCE_HEALTH_FILE.exists():
+        return {}
+    try:
+        with SOURCE_HEALTH_FILE.open("r", encoding="utf-8") as stream:
+            value = json.load(stream)
+        return value if isinstance(value, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def source_key(source):
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+def source_host(source):
+    try:
+        return urlsplit(source).hostname or "Неизвестный источник"
+    except ValueError:
+        return "Некорректный адрес"
+
+
+def check_source(source):
+    if not valid_source_url(source):
+        return {"status": "blocked", "http_status": None, "latency_ms": None}
+    hostname = urlsplit(source).hostname or ""
+    if not _public_source_host(hostname):
+        return {"status": "blocked", "http_status": None, "latency_ms": None}
+
+    started = time.perf_counter()
+    try:
+        with requests.get(
+            source,
+            timeout=(2, 4),
+            allow_redirects=False,
+            stream=True,
+            headers={"Accept": "text/plain"},
+        ) as response:
+            http_status = response.status_code
+            next(response.iter_content(1), b"")
+        return {
+            "status": "ok" if 200 <= http_status < 300 else "error",
+            "http_status": http_status,
+            "latency_ms": round((time.perf_counter() - started) * 1000),
+        }
+    except requests.RequestException:
+        return {
+            "status": "error",
+            "http_status": None,
+            "latency_ms": round((time.perf_counter() - started) * 1000),
+        }
+
+
 def _atomic_save_json(path, value):
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
     try:
@@ -427,6 +484,7 @@ def index():
                 "name": data.get("name", token[:8]),
                 "enabled": data.get("enabled", False),
                 "sources": data.get("sources", []),
+                "favorite": data.get("favorite", False),
             }
         )
 
@@ -435,6 +493,103 @@ def index():
         users=items,
         subscription_base_url=SUBSCRIPTION_BASE_URL,
     )
+
+
+@app.route("/dashboard")
+def dashboard():
+    users = load_users()
+    health = load_source_health()
+    source_hosts = {}
+    for data in users.values():
+        items = data.get("sources", [])
+        if not isinstance(items, list):
+            continue
+        for source in items:
+            if isinstance(source, str):
+                key = source_key(source)
+                source_hosts.setdefault(
+                    key,
+                    {
+                        "key": key,
+                        "host": source_host(source),
+                        "health": health.get(key, {}),
+                    },
+                )
+    source_items = list(source_hosts.values())
+    healthy = sum(item["health"].get("status") == "ok" for item in source_items)
+    favorites = [
+        {"name": data.get("name", token[:8]), "token": token}
+        for token, data in users.items()
+        if data.get("favorite", False)
+    ][:6]
+    return render_template(
+        "dashboard.html",
+        total_users=len(users),
+        active_users=sum(bool(data.get("enabled", False)) for data in users.values()),
+        source_count=len(source_items),
+        healthy_sources=healthy,
+        sources=source_items[:6],
+        favorite_users=favorites,
+    )
+
+
+@app.route("/sources")
+def sources_page():
+    users = load_users()
+    health = load_source_health()
+    records = {}
+    for data in users.values():
+        name = data.get("name", "Пользователь")
+        sources = data.get("sources", [])
+        if not isinstance(sources, list):
+            continue
+        for source in sources:
+            if not isinstance(source, str):
+                continue
+            key = source_key(source)
+            record = records.setdefault(
+                key,
+                {
+                    "key": key,
+                    "host": source_host(source),
+                    "users": [],
+                    "health": health.get(key, {}),
+                },
+            )
+            if name not in record["users"]:
+                record["users"].append(name)
+    return render_template("sources.html", sources=list(records.values()))
+
+
+@app.route("/sources/check", methods=["POST"])
+@serialized_state_change
+def check_all_sources():
+    users = load_users()
+    unique_sources = set()
+    for data in users.values():
+        items = data.get("sources", [])
+        if isinstance(items, list):
+            unique_sources.update(item for item in items if isinstance(item, str))
+    source_list = sorted(unique_sources)
+    if len(source_list) > 40:
+        return {"error": "За один запуск можно проверить не более 40 уникальных источников."}, 400
+
+    results = {}
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = {
+            executor.submit(check_source, source): source
+            for source in source_list
+        }
+        for future in as_completed(futures):
+            source = futures[future]
+            result = future.result()
+            result["checked_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            results[source_key(source)] = result
+
+    health = load_source_health()
+    health.update(results)
+    _atomic_save_json(SOURCE_HEALTH_FILE, health)
+    return {"checked": len(results), "results": results}, 200
 
 
 @app.route("/logs")
@@ -755,6 +910,7 @@ def user_page(token):
         "name": data.get("name", token[:8]),
         "enabled": data.get("enabled", False),
         "sources": data.get("sources", []),
+        "favorite": data.get("favorite", False),
     }
 
     return render_template(
@@ -762,6 +918,17 @@ def user_page(token):
         user=user,
         subscription_base_url=SUBSCRIPTION_BASE_URL,
     )
+
+
+@app.route("/user/<token>/favorite", methods=["POST"])
+@serialized_state_change
+def toggle_user_favorite(token):
+    users = load_users()
+    if token not in users:
+        abort(404)
+    users[token]["favorite"] = not bool(users[token].get("favorite", False))
+    save_users(users)
+    return redirect(url_for("index"))
 
 
 @app.route("/user/<token>/settings", methods=["POST"])
