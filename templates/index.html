@@ -1186,6 +1186,10 @@
 
 <body>
 
+    <form method="post" action="{{ url_for('logout') }}" hidden>
+        {{ csrf_input() }}
+    </form>
+
 <div class="container">
 
     <!-- HEADER -->
