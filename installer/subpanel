@@ -103,12 +103,12 @@ change_credentials() {
     new_user="${new_user:-$current_user}"
     [[ "$new_user" =~ ^[a-zA-Z0-9_.-]{3,64}$ ]] || fail "Логин: 3–64 символа, латиница, цифры, точка, дефис или подчёркивание."
 
-    read -r -s -p 'Новый пароль (12–128 символов: латиница, цифры, . _ ~ -): ' password
+    read -r -s -p 'Новый пароль (12–128 символов: латиница, цифры, . _ ~ - @): ' password
     printf '\n'
     read -r -s -p 'Повтори новый пароль: ' password_again
     printf '\n'
     [[ "$password" == "$password_again" ]] || fail "Пароли не совпадают."
-    [[ "$password" =~ ^[A-Za-z0-9._~-]{12,128}$ ]] || fail "Пароль не соответствует требованиям."
+    [[ "$password" =~ ^[A-Za-z0-9._~@-]{12,128}$ ]] || fail "Пароль не соответствует требованиям."
 
     rollback_file="$(mktemp "$CONFIG_DIR/.panel.env.rollback.XXXXXX")"
     chmod 0600 "$rollback_file"
