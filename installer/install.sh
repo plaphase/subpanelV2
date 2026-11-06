@@ -134,7 +134,8 @@ if [[ -z "$PUBLIC_HOST" ]]; then
     ask "Домен или IPv4-адрес для доступа к панели: "
     PUBLIC_HOST="$REPLY"
 fi
-python3 - "$PUBLIC_HOST" <<'PY' || fail "Укажи корректное доменное имя или IPv4-адрес."
+validate_host() {
+python3 - "$1" <<'PY'
 import ipaddress
 import re
 import sys
@@ -150,6 +151,23 @@ except ipaddress.AddressValueError:
     ):
         raise SystemExit(1)
 PY
+}
+validate_host "$PUBLIC_HOST" || fail "Укажи корректное доменное имя или IPv4-адрес."
+
+SUBSCRIPTION_HOST="${SUBSCRIPTION_HOST:-}"
+if [[ -z "$SUBSCRIPTION_HOST" ]]; then
+    ask "Домен для ссылок подписки (Enter — использовать $PUBLIC_HOST): "
+    SUBSCRIPTION_HOST="$REPLY"
+fi
+SUBSCRIPTION_HOST="${SUBSCRIPTION_HOST:-$PUBLIC_HOST}"
+validate_host "$SUBSCRIPTION_HOST" || fail "Укажи корректный домен подписки или IPv4-адрес."
+
+if [[ "$SUBSCRIPTION_HOST" != "$PUBLIC_HOST" ]]; then
+    PUBLIC_HOST_IS_IPV4="$(python3 -c 'import ipaddress,sys; exec("try: ipaddress.IPv4Address(sys.argv[1]); print(1)\nexcept ipaddress.AddressValueError: print(0)")' "$PUBLIC_HOST")"
+    SUBSCRIPTION_HOST_IS_IPV4="$(python3 -c 'import ipaddress,sys; exec("try: ipaddress.IPv4Address(sys.argv[1]); print(1)\nexcept ipaddress.AddressValueError: print(0)")' "$SUBSCRIPTION_HOST")"
+    [[ "$PUBLIC_HOST_IS_IPV4" == "0" && "$SUBSCRIPTION_HOST_IS_IPV4" == "0" ]] ||
+        fail "Для отдельного домена подписок нужны домены панели и подписки, а не IP-адреса."
+fi
 
 PUBLIC_SCHEME="http"
 TLS_EMAIL="${TLS_EMAIL:-}"
@@ -164,6 +182,8 @@ if [[ -n "$TLS_EMAIL" ]]; then
     PUBLIC_SCHEME="https"
     INSTALL_TLS=1
 else
+    [[ "$SUBSCRIPTION_HOST" == "$PUBLIC_HOST" ]] ||
+        fail "Для отдельного домена подписок нужен HTTPS. Укажи email для Let's Encrypt."
     printf '\n[WARN] HTTP не шифрует логин, пароль или cookie сессии.\n'
     HTTP_CONFIRM="${INSTALLER_CONFIRM_HTTP:-}"
     if [[ -z "$HTTP_CONFIRM" ]]; then
@@ -179,6 +199,7 @@ if [[ "${INSTALLER_DRY_RUN:-0}" == "1" ]]; then
     printf '[DRY RUN] Каталог данных: %s\n' "$DATA_DIR"
     printf '[DRY RUN] Каталог приложения: %s\n' "$APP_DIR"
     printf '[DRY RUN] URL: %s://%s\n' "$PUBLIC_SCHEME" "$PUBLIC_HOST"
+    printf '[DRY RUN] Ссылки подписки: %s://%s\n' "$PUBLIC_SCHEME" "$SUBSCRIPTION_HOST"
     printf '[DRY RUN] TLS: %s\n' "$INSTALL_TLS"
     printf '[DRY RUN] Изменений в системе не выполнено.\n'
     exit 0
@@ -202,6 +223,7 @@ APP_DIR="$APP_DIR" SOURCE_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)" \
 printf '\n[5/6] Создание конфигурации и запуск службы...\n'
 APP_DIR="$APP_DIR" CONFIG_DIR="$CONFIG_DIR" CONFIG_FILE="$CONFIG_FILE" DATA_DIR="$DATA_DIR" \
     LOG_DIR="$LOG_DIR" PANEL_PORT="$PANEL_PORT" PANEL_PUBLIC_URL="$PUBLIC_SCHEME://$PUBLIC_HOST" \
+    SUBSCRIPTION_BASE_URL="$PUBLIC_SCHEME://$SUBSCRIPTION_HOST" \
     bash "$SCRIPT_DIR/lib/create-config.sh"
 
 SERVICE_USER="$SERVICE_USER" SERVICE_GROUP="$SERVICE_GROUP" APP_DIR="$APP_DIR" \
@@ -228,9 +250,11 @@ if [[ "$HEALTH_OK" -ne 1 ]]; then
 fi
 
 printf '\n[6/6] Настройка Nginx и проверка доступа...\n'
-PUBLIC_HOST="$PUBLIC_HOST" PANEL_PORT="$PANEL_PORT" bash "$SCRIPT_DIR/lib/install-nginx-site.sh"
+PUBLIC_HOST="$PUBLIC_HOST" SUBSCRIPTION_HOST="$SUBSCRIPTION_HOST" PANEL_PORT="$PANEL_PORT" \
+    bash "$SCRIPT_DIR/lib/install-nginx-site.sh"
 if [[ "$INSTALL_TLS" == "1" ]]; then
-    PUBLIC_HOST="$PUBLIC_HOST" TLS_EMAIL="$TLS_EMAIL" bash "$SCRIPT_DIR/lib/configure-https.sh"
+    PUBLIC_HOST="$PUBLIC_HOST" SUBSCRIPTION_HOST="$SUBSCRIPTION_HOST" TLS_EMAIL="$TLS_EMAIL" \
+        bash "$SCRIPT_DIR/lib/configure-https.sh"
 fi
 bash "$SCRIPT_DIR/lib/install-management-command.sh"
 
@@ -246,6 +270,12 @@ fi
 if [[ "$INSTALL_TLS" == "1" ]]; then
     NGINX_HTTP_CODE="$(curl --connect-timeout 4 --resolve "$PUBLIC_HOST:443:127.0.0.1" \
         -sS -o /dev/null -w '%{http_code}' "https://$PUBLIC_HOST/health" || true)"
+    if [[ "$NGINX_HTTP_CODE" == "200" && "$SUBSCRIPTION_HOST" != "$PUBLIC_HOST" ]]; then
+        SUBSCRIPTION_HTTP_CODE="$(curl --connect-timeout 4 --resolve "$SUBSCRIPTION_HOST:443:127.0.0.1" \
+            -sS -o /dev/null -w '%{http_code}' "https://$SUBSCRIPTION_HOST/health" || true)"
+        [[ "$SUBSCRIPTION_HTTP_CODE" == "200" ]] ||
+            fail "Nginx не проксировал домен подписки /health (HTTP $SUBSCRIPTION_HTTP_CODE)."
+    fi
 else
     NGINX_HTTP_CODE="$(curl --connect-timeout 4 -sS -o /dev/null -w '%{http_code}' \
         -H "Host: $PUBLIC_HOST" http://127.0.0.1/health || true)"
@@ -254,6 +284,7 @@ fi
 
 printf '\n[OK] Установка завершена.\n'
 printf '[INFO] Панель: %s://%s\n' "$PUBLIC_SCHEME" "$PUBLIC_HOST"
+printf '[INFO] Ссылки подписки: %s://%s\n' "$PUBLIC_SCHEME" "$SUBSCRIPTION_HOST"
 printf '[INFO] Администратор: прочитай PANEL_USERNAME в %s\n' "$CONFIG_FILE"
 printf '[INFO] Случайный пароль сохранён в %s (права 600).\n' "$CONFIG_FILE"
 printf '[INFO] Меню управления: sudo subpanel\n'

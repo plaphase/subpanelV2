@@ -52,6 +52,10 @@ if [[ -n "$PANEL_PUBLIC_URL" ]]; then
     [[ "$PANEL_PUBLIC_URL" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$ ]] ||
         fail "Некорректный PANEL_PUBLIC_URL."
 fi
+if [[ -n "$SUBSCRIPTION_BASE_URL" ]]; then
+    [[ "$SUBSCRIPTION_BASE_URL" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?$ ]] ||
+        fail "Некорректный SUBSCRIPTION_BASE_URL."
+fi
 
 APP_DIR="${APP_DIR:-/opt/multisub-panel}"
 PANEL_COOKIE_SECURE=true
