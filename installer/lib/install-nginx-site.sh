@@ -119,10 +119,10 @@ from pathlib import Path
 
 path = Path(sys.argv[1])
 text = path.read_text(encoding="utf-8")
+text = text.replace("@SUBSCRIPTION_SERVER@", sys.argv[5])
 text = text.replace("@PUBLIC_HOST@", sys.argv[2])
 text = text.replace("@SUBSCRIPTION_HOST@", sys.argv[3])
 text = text.replace("@PANEL_PORT@", sys.argv[4])
-text = text.replace("@SUBSCRIPTION_SERVER@", sys.argv[5])
 if any(token in text for token in ("@PUBLIC_HOST@", "@SUBSCRIPTION_HOST@", "@PANEL_PORT@", "@SUBSCRIPTION_SERVER@")):
     raise SystemExit("Не все значения шаблона Nginx заменены.")
 path.write_text(text, encoding="utf-8")
