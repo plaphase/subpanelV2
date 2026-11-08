@@ -54,6 +54,9 @@ SUBSCRIPTION_PROTOCOLS = (
 )
 _subscription_cache = {}
 _subscription_cache_lock = threading.Lock()
+_log_file_lock = threading.Lock()
+SUBSCRIPTION_TITLE = "MultiSub VPN"
+SUBSCRIPTION_UPDATE_INTERVAL_HOURS = 1
 
 PANEL_USERNAME = os.environ.get("PANEL_USERNAME", "admin")
 PANEL_PASSWORD = os.environ.get("PANEL_PASSWORD", "")
@@ -240,20 +243,75 @@ def _connections_from_payload(payload):
     ]
 
 
-def get_user_connections(token, sources):
+def append_log_events(events):
+    """Append a related group of sanitized events without interleaving workers."""
+    now = datetime.now()
+    lines = []
+    for level, message in events:
+        timestamp = now.strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
+        lines.append(f"{timestamp} [{level}] {message}\n")
+    if not lines:
+        return
+    payload = "".join(lines).encode("utf-8")
+    flags = os.O_CREAT | os.O_WRONLY | os.O_APPEND
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        fd = os.open(LOG_FILE, flags, 0o640)
+        try:
+            with _log_file_lock:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                try:
+                    remaining = memoryview(payload)
+                    while remaining:
+                        written = os.write(fd, remaining)
+                        if written <= 0:
+                            raise OSError("Не удалось полностью записать журнал.")
+                        remaining = remaining[written:]
+                finally:
+                    fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+    except OSError:
+        app.logger.exception("Не удалось записать событие в журнал MultiSub.")
+
+
+def get_user_connections(token, sources, include_diagnostics=False):
     now = time.monotonic()
     with _subscription_cache_lock:
         cached = _subscription_cache.get(token)
         if cached and cached[0] > now:
-            return list(cached[1])
+            connections = list(cached[1])
+            diagnostics = [dict(item) for item in cached[2]] if len(cached) > 2 else []
+            if include_diagnostics:
+                return connections, diagnostics, True
+            return connections
 
     connections = []
     seen = set()
-    for source in sources[:50]:
+    diagnostics = []
+    for index, source in enumerate(sources[:50], start=1):
+        started = time.perf_counter()
+        http_status = None
+        payload_size = 0
+        outcome = "ERROR"
+        source_connections = 0
+
         if not valid_source_url(source):
+            diagnostics.append({
+                "index": index,
+                "host": source_host(source) if isinstance(source, str) else "Некорректный адрес",
+                "outcome": "BLOCKED", "http_status": None,
+                "latency_ms": None, "size": 0, "connections": 0,
+            })
             continue
         hostname = urlsplit(source).hostname
         if not _public_source_host(hostname):
+            diagnostics.append({
+                "index": index, "host": hostname or "Неизвестный источник",
+                "outcome": "BLOCKED", "http_status": None,
+                "latency_ms": None, "size": 0, "connections": 0,
+            })
             continue
         try:
             with requests.get(
@@ -263,30 +321,90 @@ def get_user_connections(token, sources):
                 stream=True,
                 headers={"Accept": "text/plain"},
             ) as response:
-                if response.status_code != 200:
-                    continue
-                payload = bytearray()
-                for chunk in response.iter_content(65536):
-                    payload.extend(chunk)
-                    if len(payload) > 1024 * 1024:
-                        payload.clear()
-                        break
-                if not payload:
-                    continue
+                http_status = response.status_code
+                if response.status_code == 200:
+                    payload = bytearray()
+                    for chunk in response.iter_content(65536):
+                        payload.extend(chunk)
+                        if len(payload) > 1024 * 1024:
+                            payload_size = len(payload)
+                            payload.clear()
+                            break
+                    else:
+                        payload_size = len(payload)
+
+                    if payload:
+                        parsed_connections = _connections_from_payload(bytes(payload))
+                        if parsed_connections:
+                            outcome = "OK"
+                            for connection in parsed_connections:
+                                if connection not in seen:
+                                    seen.add(connection)
+                                    connections.append(connection)
+                                    source_connections += 1
+                                    if len(connections) >= 500:
+                                        break
+                        else:
+                            outcome = "ERROR"
+                    else:
+                        outcome = "ERROR"
+                else:
+                    outcome = "ERROR"
+        except requests.Timeout:
+            outcome = "TIMEOUT"
         except requests.RequestException:
-            continue
-        for connection in _connections_from_payload(bytes(payload)):
-            if connection not in seen:
-                seen.add(connection)
-                connections.append(connection)
-                if len(connections) >= 500:
-                    break
+            outcome = "ERROR"
+
+        diagnostics.append({
+            "index": index,
+            "host": hostname,
+            "outcome": outcome,
+            "http_status": http_status,
+            "latency_ms": round((time.perf_counter() - started) * 1000),
+            "size": payload_size,
+            "connections": source_connections,
+        })
+
         if len(connections) >= 500:
             break
 
     with _subscription_cache_lock:
-        _subscription_cache[token] = (time.monotonic() + 60, tuple(connections))
+        _subscription_cache[token] = (
+            time.monotonic() + 60,
+            tuple(connections),
+            tuple(dict(item) for item in diagnostics),
+        )
+    if include_diagnostics:
+        return connections, diagnostics, False
     return connections
+
+
+def log_subscription_request(token, diagnostics, connection_count, cached=False):
+    user_key = token[:8]
+    events = [("INFO", f"request user={user_key} sources={len(diagnostics)} cached={int(cached)}")]
+    errors = 0
+    for item in diagnostics:
+        outcome = item["outcome"]
+        http_outcome = "OK" if outcome == "OK" else "TIMEOUT" if outcome == "TIMEOUT" else "ERROR"
+        status = item["http_status"] if item["http_status"] is not None else 0
+        latency_ms = item["latency_ms"]
+        duration = f"{latency_ms / 1000:.3f}s" if latency_ms is not None else "0s"
+        events.append((
+            "INFO",
+            f"source {http_outcome} status={status} time={duration} size={item['size']}"
+        ))
+        events.append((
+            "INFO",
+            f"source={item['index']} {outcome} host={item['host']} "
+            f"connections={item['connections']} time={duration}"
+        ))
+        if outcome != "OK":
+            errors += 1
+    events.append((
+        "ERROR" if errors else "INFO",
+        f"result user={user_key} connections={connection_count} errors={errors}",
+    ))
+    append_log_events(events)
 
 
 @app.before_request
@@ -658,6 +776,7 @@ def logs_page():
     )
     source_pattern = re.compile(
         r"\bsource=(\d+)\s+([A-Z_]+)\b"
+        r"(?:\s+host=(\S+))?"
         r"(?:\s+connections=(\d+))?(?:\s+time=([\d.]+s?))?",
         re.IGNORECASE
     )
@@ -781,10 +900,12 @@ def logs_page():
 
             source = source_pattern.search(message)
             if source:
-                index, outcome, connections, duration = source.groups()
+                index, outcome, logged_host, connections, duration = source.groups()
                 index = int(index)
                 names = source_names.get(current["user_key"], [])
-                name = names[index - 1] if 0 < index <= len(names) else f"Источник {index}"
+                name = logged_host or (
+                    names[index - 1] if 0 < index <= len(names) else f"Источник {index}"
+                )
 
                 http_data = pending_http or {}
                 current["sources"].append({
@@ -864,10 +985,17 @@ def subscription(token):
     if not user or not user.get("enabled", False):
         abort(404)
     sources = user.get("sources", [])
-    connections = get_user_connections(token, sources if isinstance(sources, list) else [])
+    connections, diagnostics, cached = get_user_connections(
+        token,
+        sources if isinstance(sources, list) else [],
+        include_diagnostics=True,
+    )
+    log_subscription_request(token, diagnostics, len(connections), cached)
     encoded = base64.b64encode("\n".join(connections).encode("utf-8")).decode("ascii")
     response = Response(encoded, status=200, content_type="text/plain; charset=utf-8")
     response.headers["Cache-Control"] = "public, max-age=60"
+    response.headers["profile-title"] = SUBSCRIPTION_TITLE
+    response.headers["profile-update-interval"] = str(SUBSCRIPTION_UPDATE_INTERVAL_HOURS)
     return response
 
 
@@ -1239,3 +1367,4 @@ if __name__ == "__main__":
         port=int(os.environ.get("PANEL_PORT", "18082")),
         debug=False,
     )
+
