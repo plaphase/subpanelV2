@@ -1000,11 +1000,11 @@
         <div class="section">
 
             <div class="section-title">
-                VPS-источники · {{ user.sources|length }}
+                Безопасные источники · {{ user.sources|length }}
             </div>
 
             <div class="section-description">
-                Источники, из которых собирается подписка пользователя
+                Серверы, адреса которых добавлены вами и находятся под вашим управлением
             </div>
 
             
@@ -1108,6 +1108,42 @@
 
             </form>
 
+        </div>
+
+
+        <div class="section public-sources-section" style="margin-top:22px;padding:18px;border:1px solid #493d29;border-radius:12px;background:linear-gradient(145deg,#201c16,#151923);">
+            <div class="section-title" style="color:#ffd177;">Общедоступные сторонние VPN · {{ user.public_sources|length }}</div>
+            <div class="section-description" style="margin:6px 0 14px;line-height:1.6;">
+                Эти подключения публикует сторонний проект; они не управляются нами. Используйте как запасные и не передавайте через них чувствительные данные.
+            </div>
+            {% if user.public_sources %}
+                {% for source in user.public_sources %}
+                <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px;margin:8px 0;border:1px solid #493d29;border-radius:9px;background:#171811;">
+                    <span style="color:#ffd177;font-weight:700;white-space:nowrap;">{% if source == public_vpn_feeds['top150'].url %}{{ public_vpn_feeds['top150'].label }}{% elif source == public_vpn_feeds['white-list-mobile'].url %}{{ public_vpn_feeds['white-list-mobile'].label }}{% else %}Публичный · пользовательский URL{% endif %}</span>
+                    <form method="post" action="{{ url_for('update_public_source', token=user.token, index=loop.index0) }}" style="display:flex;align-items:center;gap:8px;flex:1;min-width:min(100%,360px);">
+                        {{ csrf_input() }}
+                        <input type="url" name="source" value="{{ source }}" maxlength="2048" required placeholder="https://..." aria-label="URL публичного источника" style="box-sizing:border-box;min-width:0;flex:1;padding:10px 12px;border:1px solid #493d29;border-radius:8px;background:#111720;color:#dce6f5;">
+                        <button type="submit" class="primary" style="padding:10px 12px;border:0;border-radius:8px;cursor:pointer;font-weight:700;white-space:nowrap;">Сохранить URL</button>
+                    </form>
+                    <form method="post" action="{{ url_for('delete_public_source', token=user.token, index=loop.index0) }}" onsubmit="return confirm('Убрать публичный источник из подписки?')">
+                        {{ csrf_input() }}
+                        <button type="submit" class="delete-source" title="Убрать публичный источник">🗑</button>
+                    </form>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty">Публичный источник пока не подключён.</div>
+            {% endif %}
+            <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:12px;">
+                {% for feed_id, feed in public_vpn_feeds.items() %}
+                    {% if feed.url not in user.public_sources %}
+                    <form method="post" action="{{ url_for('add_public_source', token=user.token, feed_id=feed_id) }}">
+                        {{ csrf_input() }}
+                        <button type="submit" class="primary" style="padding:10px 14px;border:0;border-radius:8px;cursor:pointer;font-weight:700;">＋ Добавить {{ feed.label }}</button>
+                    </form>
+                    {% endif %}
+                {% endfor %}
+            </div>
         </div>
 
 

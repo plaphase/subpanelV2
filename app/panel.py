@@ -15,7 +15,7 @@ import hashlib
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from functools import wraps
-from urllib.parse import urlsplit
+from urllib.parse import quote, unquote, urlsplit
 import requests
 
 from flask import (
@@ -57,6 +57,29 @@ _subscription_cache_lock = threading.Lock()
 _log_file_lock = threading.Lock()
 SUBSCRIPTION_TITLE = "MultiSub VPN"
 SUBSCRIPTION_UPDATE_INTERVAL_HOURS = 1
+PUBLIC_VPN_FEED_URL = (
+    "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/"
+    "refs/heads/main/BLACK_VLESS_RUS_mobile.txt"
+)
+PUBLIC_VPN_FEEDS = {
+    "top150": {
+        "label": "Публичный · TOP-150 mixed/mobile",
+        "url": PUBLIC_VPN_FEED_URL,
+    },
+    "white-list-mobile": {
+        "label": "Публичные белые списки · Reality Mobile",
+        "url": (
+            "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/"
+            "refs/heads/main/Vless-Reality-White-Lists-Rus-Mobile.txt"
+        ),
+    },
+}
+SUBSCRIPTION_INFO_TEXT = (
+    "🔒 Безопасные: под нашим управлением.\n"
+    "🌐 Публичные: сторонние, используйте при необходимости.\n\n"
+    "🔄 Автообновление каждый час.\n\n"
+    "Проблемы с подключением? Обновите подписку вручную ↻"
+)
 
 PANEL_USERNAME = os.environ.get("PANEL_USERNAME", "admin")
 PANEL_PASSWORD = os.environ.get("PANEL_PASSWORD", "")
@@ -243,6 +266,49 @@ def _connections_from_payload(payload):
     ]
 
 
+def _label_connection(connection, source_kind):
+    """Tag imported proxy names so owned and public nodes stay distinguishable in clients."""
+    prefixes = {
+        "personal": "[БЕЗОПАСНЫЙ]",
+        "public": "[ПУБЛИЧНЫЙ]",
+        "public_top150": "[ПУБЛИЧНЫЙ]",
+        "public_white_list": "[ПУБЛИЧНЫЕ БЕЛЫЕ СПИСКИ]",
+    }
+    prefix = prefixes.get(source_kind, prefixes["personal"])
+    known_prefixes = tuple(f"{value} " for value in prefixes.values()) + ("[НАШ] ",)
+
+    def clean_name(value):
+        name = str(value or "").strip()
+        for known_prefix in known_prefixes:
+            if name.startswith(known_prefix):
+                return name[len(known_prefix):].strip()
+        return name
+
+    if connection.lower().startswith("vmess://"):
+        payload = connection[8:]
+        try:
+            decoded = base64.b64decode(payload + "=" * (-len(payload) % 4))
+            config = json.loads(decoded.decode("utf-8-sig"))
+            if isinstance(config, dict):
+                current_name = clean_name(config.get("ps", ""))
+                config["ps"] = f"{prefix} {current_name}".strip()
+                encoded = base64.b64encode(
+                    json.dumps(config, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                ).decode("ascii")
+                return "vmess://" + encoded
+        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+            return connection
+        return connection
+
+    try:
+        parsed = urlsplit(connection)
+        current_name = clean_name(unquote(parsed.fragment))
+        labelled_name = f"{prefix} {current_name}".strip()
+        return parsed._replace(fragment=quote(labelled_name, safe="")).geturl()
+    except (ValueError, UnicodeError):
+        return connection
+
+
 def append_log_events(events):
     """Append a related group of sanitized events without interleaving workers."""
     now = datetime.now()
@@ -276,7 +342,7 @@ def append_log_events(events):
         app.logger.exception("Не удалось записать событие в журнал MultiSub.")
 
 
-def get_user_connections(token, sources, include_diagnostics=False):
+def get_user_connections(token, sources, include_diagnostics=False, source_kinds=None):
     now = time.monotonic()
     with _subscription_cache_lock:
         cached = _subscription_cache.get(token)
@@ -290,6 +356,7 @@ def get_user_connections(token, sources, include_diagnostics=False):
     connections = []
     seen = set()
     diagnostics = []
+    source_kinds = source_kinds or []
     for index, source in enumerate(sources[:50], start=1):
         started = time.perf_counter()
         http_status = None
@@ -337,7 +404,17 @@ def get_user_connections(token, sources, include_diagnostics=False):
                         parsed_connections = _connections_from_payload(bytes(payload))
                         if parsed_connections:
                             outcome = "OK"
-                            for connection in parsed_connections:
+                            source_kind = (
+                                source_kinds[index - 1]
+                                if index - 1 < len(source_kinds) else "personal"
+                            )
+                            if source_kind == "public":
+                                if source == PUBLIC_VPN_FEEDS["white-list-mobile"]["url"]:
+                                    source_kind = "public_white_list"
+                                elif source == PUBLIC_VPN_FEEDS["top150"]["url"]:
+                                    source_kind = "public_top150"
+                            for raw_connection in parsed_connections:
+                                connection = _label_connection(raw_connection, source_kind)
                                 if connection not in seen:
                                     seen.add(connection)
                                     connections.append(connection)
@@ -609,6 +686,8 @@ def index():
                 "name": data.get("name", token[:8]),
                 "enabled": data.get("enabled", False),
                 "sources": data.get("sources", []),
+                "public_sources": data.get("public_sources", []),
+                "source_count": len(data.get("sources", []) or []) + len(data.get("public_sources", []) or []),
                 "favorite": data.get("favorite", False),
             }
         )
@@ -626,7 +705,7 @@ def dashboard():
     health = load_source_health()
     source_hosts = {}
     for data in users.values():
-        items = data.get("sources", [])
+        items = list(data.get("sources", []) or []) + list(data.get("public_sources", []) or [])
         if not isinstance(items, list):
             continue
         for source in items:
@@ -665,7 +744,7 @@ def sources_page():
     records = {}
     for data in users.values():
         name = data.get("name", "Пользователь")
-        sources = data.get("sources", [])
+        sources = list(data.get("sources", []) or []) + list(data.get("public_sources", []) or [])
         if not isinstance(sources, list):
             continue
         for source in sources:
@@ -692,7 +771,7 @@ def check_all_sources():
     users = load_users()
     unique_sources = set()
     for data in users.values():
-        items = data.get("sources", [])
+        items = list(data.get("sources", []) or []) + list(data.get("public_sources", []) or [])
         if isinstance(items, list):
             unique_sources.update(item for item in items if isinstance(item, str))
     source_list = sorted(unique_sources)
@@ -745,7 +824,8 @@ def logs_page():
     for token, data in users.items():
         key = token[:8]
         source_names[key] = []
-        for source in data.get("sources", []):
+        all_sources = list(data.get("sources", []) or []) + list(data.get("public_sources", []) or [])
+        for source in all_sources:
             if isinstance(source, str):
                 value = source.strip()
             elif isinstance(source, dict):
@@ -831,10 +911,10 @@ def logs_page():
         else:
             timestamp, log_level, message = "", "INFO", text
 
-        request = request_pattern.search(message)
-        if request:
+        request_match = request_pattern.search(message)
+        if request_match:
             finish_group(current)
-            user_key, expected = request.groups()
+            user_key, expected = request_match.groups()
             current = {
                 "timestamp": timestamp,
                 "log_level": log_level,
@@ -944,6 +1024,9 @@ def logs_page():
 
     finish_group(current)
 
+    if request.args.get("fragment") == "1":
+        return render_template("log-events.html", events=events)
+
     return render_template(
         "logs.html",
         lines=lines,
@@ -965,7 +1048,14 @@ def public_user_page(token):
     if not user or not user.get("enabled", False):
         abort(404)
     sources = user.get("sources", [])
-    connections = get_user_connections(token, sources if isinstance(sources, list) else [])
+    public_sources = user.get("public_sources", [])
+    sources = sources if isinstance(sources, list) else []
+    public_sources = public_sources if isinstance(public_sources, list) else []
+    connections = get_user_connections(
+        token,
+        sources + public_sources,
+        source_kinds=["personal"] * len(sources) + ["public"] * len(public_sources),
+    )
     subscription_url = (
         f"{SUBSCRIPTION_BASE_URL}/s/{token}"
         if SUBSCRIPTION_BASE_URL
@@ -973,7 +1063,7 @@ def public_user_page(token):
     )
     return render_template(
         "public_user.html",
-        user={"name": user.get("name", token[:8]), "enabled": True, "sources": sources},
+        user={"name": user.get("name", token[:8]), "enabled": True, "sources": sources + public_sources},
         connections=connections,
         subscription_url=subscription_url,
     )
@@ -985,17 +1075,38 @@ def subscription(token):
     if not user or not user.get("enabled", False):
         abort(404)
     sources = user.get("sources", [])
+    public_sources = user.get("public_sources", [])
+    sources = sources if isinstance(sources, list) else []
+    public_sources = public_sources if isinstance(public_sources, list) else []
+    combined_sources = sources + public_sources
     connections, diagnostics, cached = get_user_connections(
         token,
-        sources if isinstance(sources, list) else [],
+        combined_sources,
         include_diagnostics=True,
+        source_kinds=["personal"] * len(sources) + ["public"] * len(public_sources),
     )
     log_subscription_request(token, diagnostics, len(connections), cached)
+    # Send partial results when at least one source worked. This lets clients
+    # refresh from healthy sources while an unavailable source is skipped.
+    # If none worked, fail the request so Happ won't replace a profile with an
+    # empty list; the unavailable sources will be retried on the next refresh.
+    if combined_sources and not connections:
+        response = Response(
+            "No subscription sources are currently available. Retry later.\n",
+            status=503,
+            content_type="text/plain; charset=utf-8",
+        )
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Retry-After"] = "60"
+        return response
     encoded = base64.b64encode("\n".join(connections).encode("utf-8")).decode("ascii")
     response = Response(encoded, status=200, content_type="text/plain; charset=utf-8")
     response.headers["Cache-Control"] = "public, max-age=60"
     response.headers["profile-title"] = SUBSCRIPTION_TITLE
     response.headers["profile-update-interval"] = str(SUBSCRIPTION_UPDATE_INTERVAL_HOURS)
+    response.headers["announce"] = "base64:" + base64.b64encode(
+        SUBSCRIPTION_INFO_TEXT.encode("utf-8")
+    ).decode("ascii")
     return response
 
 
@@ -1045,6 +1156,7 @@ def user_page(token):
         "name": data.get("name", token[:8]),
         "enabled": data.get("enabled", False),
         "sources": data.get("sources", []),
+        "public_sources": data.get("public_sources", []),
         "favorite": data.get("favorite", False),
     }
 
@@ -1052,6 +1164,7 @@ def user_page(token):
         "user.html",
         user=user,
         subscription_base_url=SUBSCRIPTION_BASE_URL,
+        public_vpn_feeds=PUBLIC_VPN_FEEDS,
     )
 
 
@@ -1175,6 +1288,58 @@ def add_source(token):
     return redirect(url_for("user_page", token=token))
 
 
+@app.route("/user/<token>/public-sources/add", methods=["POST"], defaults={"feed_id": "top150"})
+@app.route("/user/<token>/public-sources/add/<feed_id>", methods=["POST"])
+@serialized_state_change
+def add_public_source(token, feed_id):
+    users = load_users()
+    if token not in users:
+        abort(404)
+    feed = PUBLIC_VPN_FEEDS.get(feed_id)
+    if not feed:
+        abort(404)
+    sources = users[token].setdefault("public_sources", [])
+    if feed["url"] not in sources:
+        sources.append(feed["url"])
+        save_users(users)
+    return redirect(url_for("user_page", token=token))
+
+
+@app.route("/user/<token>/public-sources/<int:index>/delete", methods=["POST"])
+@serialized_state_change
+def delete_public_source(token, index):
+    users = load_users()
+    if token not in users:
+        abort(404)
+    sources = users[token].setdefault("public_sources", [])
+    if 0 <= index < len(sources):
+        sources.pop(index)
+        save_users(users)
+    return redirect(url_for("user_page", token=token))
+
+
+@app.route("/user/<token>/public-sources/<int:index>/update", methods=["POST"])
+@serialized_state_change
+def update_public_source(token, index):
+    users = load_users()
+    if token not in users:
+        abort(404)
+
+    sources = users[token].setdefault("public_sources", [])
+    if not 0 <= index < len(sources):
+        abort(404)
+
+    source = request.form.get("source", "").strip()
+    if not valid_source_url(source):
+        abort(400, description="Укажите корректный публичный URL с http:// или https:// (до 2048 символов).")
+
+    if source not in sources or sources[index] != source:
+        sources[index] = source
+        save_users(users)
+
+    return redirect(url_for("user_page", token=token))
+
+
 @app.route("/user/<token>/sources/<int:index>/delete", methods=["POST"])
 @serialized_state_change
 def delete_source(token, index):
@@ -1239,6 +1404,7 @@ def bulk_page():
             "name": data.get("name", token[:8]),
             "enabled": data.get("enabled", False),
             "sources": data.get("sources", []) or [],
+            "public_sources": data.get("public_sources", []) or [],
         })
 
     return render_template("bulk.html", users=items)
@@ -1257,33 +1423,40 @@ def bulk_delete_sources():
         if "|" not in item:
             continue
 
-        token, index = item.rsplit("|", 1)
+        parts = item.rsplit("|", 2)
+        if len(parts) == 2:
+            token, index_text = parts
+            source_kind = "personal"
+        else:
+            token, source_kind, index_text = parts
 
         try:
-            index = int(index)
+            index = int(index_text)
         except ValueError:
             continue
 
         if token in users:
-            by_user.setdefault(token, []).append(index)
+            if source_kind not in {"personal", "public"}:
+                continue
+            by_user.setdefault(token, []).append((source_kind, index))
 
     removed = 0
     affected_names = []
 
-    for token, indexes in by_user.items():
-        sources = users[token].setdefault("sources", [])
+    for token, selections in by_user.items():
+        changed = False
+        for source_kind, indexes in (("personal", []), ("public", [])):
+            indexes.extend(index for kind, index in selections if kind == source_kind)
+            key = "sources" if source_kind == "personal" else "public_sources"
+            sources = users[token].setdefault(key, [])
+            valid_indexes = sorted({i for i in indexes if 0 <= i < len(sources)}, reverse=True)
+            for index in valid_indexes:
+                sources.pop(index)
+                removed += 1
+                changed = True
 
-        valid_indexes = sorted(
-            {i for i in indexes if 0 <= i < len(sources)},
-            reverse=True
-        )
-
-        if not valid_indexes:
+        if not changed:
             continue
-
-        for index in valid_indexes:
-            sources.pop(index)
-            removed += 1
 
         affected_names.append(
             users[token].get("name", token[:8])
@@ -1367,4 +1540,3 @@ if __name__ == "__main__":
         port=int(os.environ.get("PANEL_PORT", "18082")),
         debug=False,
     )
-

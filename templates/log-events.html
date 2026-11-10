@@ -1,0 +1,60 @@
+{% if events %}
+  {% for event in events | reverse %}
+  <article class="event {{ event.level }} {{ event.kind }}"
+           data-level="{{ event.level }}"
+           data-type="{{ event.kind }}"
+           data-types="{{ event.kind }}{% if event.kind == 'request' and event.has_sources %} source{% endif %}{% if event.kind == 'request' and event.has_result %} result{% endif %}"
+           data-search="{{ event.search }}">
+    <div class="event-header">
+      <div class="event-title">
+        {% if event.kind == 'request' %}
+          <strong>{{ event.user_name or event.user_key }}</strong>
+          <span class="event-badge {{ event.level }}">
+            {% if event.level == 'success' %}Успешно{% elif event.level == 'error' %}Ошибка{% else %}Не завершён{% endif %}
+          </span>
+        {% else %}
+          <strong>{{ event.log_level }}</strong>
+          <span class="event-badge {{ event.level }}">{{ event.level|upper }}</span>
+        {% endif %}
+      </div>
+      <time>{{ event.timestamp or 'Время не указано' }}</time>
+    </div>
+
+    {% if event.kind == 'request' %}
+    <div class="event-message">
+      <span>Источников <b>{{ event.expected_sources }}</b></span>
+      <span>Подключений <b>{{ event.connections }}</b></span>
+      <span>Ошибок <b>{{ event.errors }}</b></span>
+    </div>
+    {% if event.sources %}
+    <div class="grouped-sources">
+      {% for source in event.sources %}
+      <div class="grouped-source {{ 'source-ok' if source.outcome == 'OK' else 'source-fail' }}">
+        <div class="source-heading">
+          <strong>{{ source.index }}. {{ source.name }}</strong>
+          <span>{{ source.outcome }}</span>
+        </div>
+        <div class="source-meta">
+          {% if source.status is not none %}HTTP {{ source.status }}{% endif %}
+          {% if source.http_time %} · Ответ: {{ source.http_time }}{% endif %}
+          {% if source.time %} · Источник: {{ source.time }}{% endif %}
+          {% if source.connections %} · Подключений: {{ source.connections }}{% endif %}
+          {% if source.size %} · Размер: {{ source.size }} байт{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="event-message">{{ event.search }}</div>
+    {% endif %}
+
+    <details class="technical-details">
+      <summary>Технические подробности</summary>
+      <pre>{{ event.raw_lines | join('\n') }}</pre>
+    </details>
+  </article>
+  {% endfor %}
+{% else %}
+  <div class="empty">Записей в журнале пока нет.</div>
+{% endif %}

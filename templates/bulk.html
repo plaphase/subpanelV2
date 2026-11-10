@@ -296,15 +296,82 @@ input {
 
     min-height: 47px;
 
-    padding: 7px 14px 7px 61px;
+    padding: 7px 14px;
 
     border-top: 1px solid rgba(39,50,70,.55);
 
-    cursor: pointer;
+    cursor: grab;
 }
 
 .source-row:hover {
     background: rgba(255,255,255,.025);
+}
+
+.source-row.dragging {
+    opacity: .4;
+}
+
+.source-row.drag-over {
+    box-shadow: inset 0 2px 0 var(--blue);
+}
+
+.source-order-controls {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    flex: 0 0 auto;
+}
+
+.source-drag-handle {
+    flex: 0 0 18px;
+    color: var(--muted);
+    font-size: 18px;
+    line-height: 1;
+    text-align: center;
+    user-select: none;
+    cursor: grab;
+}
+
+.source-order-button {
+    width: 27px;
+    height: 28px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: var(--bg2);
+    color: var(--secondary);
+    cursor: pointer;
+    line-height: 1;
+}
+
+.source-order-button:hover:not(:disabled) {
+    border-color: var(--blue);
+    color: var(--text);
+}
+
+.source-order-button:disabled {
+    opacity: .35;
+    cursor: default;
+}
+
+.source-reorder-status {
+    position: fixed;
+    right: 22px;
+    bottom: 22px;
+    z-index: 120;
+    padding: 10px 14px;
+    border: 1px solid rgba(54,211,153,.3);
+    border-radius: 9px;
+    background: #151b27;
+    color: #4ade80;
+    font-size: 12px;
+    font-weight: 650;
+    box-shadow: 0 10px 30px rgba(0,0,0,.3);
+}
+
+.source-reorder-status.error {
+    border-color: rgba(239,83,104,.3);
+    color: #f87171;
 }
 
 .server {
@@ -450,7 +517,13 @@ input {
     }
 
     .source-row {
-        padding-left: 45px;
+        gap: 6px;
+        padding: 7px 8px;
+    }
+
+    .source-order-button {
+        width: 24px;
+        height: 27px;
     }
 
     .action-bar {
@@ -868,7 +941,7 @@ input {
                     <div class="user-meta">
 
                         <span>
-                            {{ user.sources|length }} источ.
+                            {{ (user.sources|length) + (user.public_sources|length) }} источ.
                         </span>
 
                         <span class="status {{ 'enabled' if user.enabled else 'disabled' }}">
@@ -884,10 +957,30 @@ input {
 
                     {% for source in user.sources %}
 
-                    <label
+                    <div
                         class="source-row"
+                        draggable="true"
                         data-source="{{ source|lower }}"
+                        data-source-value="{{ source }}"
+                        data-token="{{ user.token }}"
                     >
+
+                        <span class="source-drag-handle" title="Перетащить источник">⠿</span>
+
+                        <span class="source-order-controls">
+                            <button
+                                type="button"
+                                class="source-order-button source-move-up"
+                                title="Переместить источник выше"
+                                aria-label="Переместить источник выше"
+                            >▲</button>
+                            <button
+                                type="button"
+                                class="source-order-button source-move-down"
+                                title="Переместить источник ниже"
+                                aria-label="Переместить источник ниже"
+                            >▼</button>
+                        </span>
 
                         <input
                             type="checkbox"
@@ -910,14 +1003,22 @@ input {
                             </span>
                         </span>
 
-                    </label>
+                    </div>
 
                     {% else %}
-
+                    {% if not user.public_sources %}
                     <div class="empty">
                         Источников нет
                     </div>
+                    {% endif %}
+                    {% endfor %}
 
+                    {% for source in user.public_sources %}
+                    <div class="source-row public-source-row" data-source="{{ source|lower }}" data-token="{{ user.token }}">
+                        <input type="checkbox" class="checkbox source-check" name="source" value="{{ user.token }}|public|{{ loop.index0 }}" onchange="updateSelection()">
+                        <span class="server" style="color:#ffd177;flex-basis:90px">Публичный</span>
+                        <span class="source-content" title="{{ source }}"><span class="source-url">{{ source }}</span></span>
+                    </div>
                     {% endfor %}
 
                 </div>
@@ -965,6 +1066,151 @@ function sourceChecks() {
 function selectedSources() {
     return sourceChecks().filter(x => x.checked);
 }
+
+const reorderSaves = new Map();
+
+function sourceRows(userNode) {
+    return [...userNode.querySelectorAll(":scope > .children > .source-row:not(.public-source-row)")];
+}
+
+function updateSourcePositions(userNode) {
+    const token = userNode.querySelector(".add-user-check")?.dataset.token;
+    sourceRows(userNode).forEach((row, index, rows) => {
+        const checkbox = row.querySelector(".source-check");
+        const server = row.querySelector(".server");
+        const up = row.querySelector(".source-move-up");
+        const down = row.querySelector(".source-move-down");
+        if (checkbox && token) checkbox.value = token + "|" + index;
+        if (server) server.textContent = "Server " + (index + 1);
+        if (up) up.disabled = index === 0;
+        if (down) down.disabled = index === rows.length - 1;
+    });
+}
+
+function showReorderStatus(message, isError) {
+    let status = document.getElementById("source-reorder-status");
+    if (!status) {
+        status = document.createElement("div");
+        status.id = "source-reorder-status";
+        status.className = "source-reorder-status";
+        status.setAttribute("role", "status");
+        status.setAttribute("aria-live", "polite");
+        document.body.appendChild(status);
+    }
+    status.textContent = message;
+    status.classList.toggle("error", Boolean(isError));
+    clearTimeout(status.timer);
+    status.timer = setTimeout(() => status.remove(), 2200);
+}
+
+async function persistSourceOrder(userNode) {
+    const token = userNode.querySelector(".add-user-check")?.dataset.token;
+    if (!token) return;
+    const state = reorderSaves.get(token) || { inFlight: false, dirty: false };
+    state.dirty = true;
+    reorderSaves.set(token, state);
+    if (state.inFlight) return;
+
+    state.inFlight = true;
+    try {
+        while (state.dirty) {
+            state.dirty = false;
+            const order = sourceRows(userNode).map(row => row.dataset.sourceValue);
+            const response = await fetch("/user/" + encodeURIComponent(token) + "/sources/reorder", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-Requested-With": "XMLHttpRequest",
+                    "X-CSRFToken": document.querySelector('meta[name="csrf-token"]').content
+                },
+                body: JSON.stringify(order)
+            });
+            if (!response.ok) throw new Error("HTTP " + response.status);
+            const result = await response.json();
+            if (!result.success) throw new Error("Server rejected order");
+        }
+        showReorderStatus("Порядок источников сохранён");
+    } catch (error) {
+        state.dirty = false;
+        console.error("Bulk source reorder error:", error);
+        showReorderStatus("Не удалось сохранить порядок источников", true);
+    } finally {
+        state.inFlight = false;
+        if (state.dirty) persistSourceOrder(userNode);
+    }
+}
+
+function moveSource(button, direction) {
+    const row = button.closest(".source-row");
+    const userNode = button.closest(".user");
+    if (!row || !userNode) return;
+    const rows = sourceRows(userNode);
+    const index = rows.indexOf(row);
+    const target = rows[index + direction];
+    if (!target) return;
+    const children = row.parentElement;
+    if (direction < 0) children.insertBefore(row, target);
+    else children.insertBefore(target, row);
+    updateSourcePositions(userNode);
+    persistSourceOrder(userNode);
+}
+
+document.querySelectorAll(".user:not(#all-users-node)").forEach(userNode => {
+    const children = userNode.querySelector(":scope > .children");
+    if (!children) return;
+    let draggedRow = null;
+    let startingOrder = [];
+    updateSourcePositions(userNode);
+
+    children.addEventListener("click", event => {
+        const up = event.target.closest(".source-move-up");
+        const down = event.target.closest(".source-move-down");
+        if (up || down) {
+            event.preventDefault();
+            event.stopPropagation();
+            moveSource(up || down, up ? -1 : 1);
+        }
+    });
+
+    children.addEventListener("dragstart", event => {
+        const row = event.target.closest(".source-row");
+        if (!row || !event.target.closest(".source-drag-handle")) {
+            event.preventDefault();
+            return;
+        }
+        draggedRow = row;
+        startingOrder = sourceRows(userNode).map(item => item.dataset.sourceValue);
+        row.classList.add("dragging");
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", row.dataset.sourceValue);
+    });
+
+    children.addEventListener("dragover", event => {
+        const target = event.target.closest(".source-row");
+        if (!draggedRow || !target || target.classList.contains("public-source-row") || target === draggedRow) return;
+        event.preventDefault();
+        const rect = target.getBoundingClientRect();
+        children.insertBefore(draggedRow, event.clientY < rect.top + rect.height / 2 ? target : target.nextSibling);
+        children.querySelectorAll(".source-row").forEach(item => item.classList.remove("drag-over"));
+        target.classList.add("drag-over");
+    });
+
+    children.addEventListener("drop", event => {
+        if (!draggedRow) return;
+        event.preventDefault();
+        updateSourcePositions(userNode);
+    });
+
+    children.addEventListener("dragend", () => {
+        if (!draggedRow) return;
+        draggedRow.classList.remove("dragging");
+        children.querySelectorAll(".source-row").forEach(item => item.classList.remove("drag-over"));
+        updateSourcePositions(userNode);
+        const newOrder = sourceRows(userNode).map(item => item.dataset.sourceValue);
+        if (JSON.stringify(newOrder) !== JSON.stringify(startingOrder)) persistSourceOrder(userNode);
+        draggedRow = null;
+    });
+});
 
 
 function updateAddSelection() {
