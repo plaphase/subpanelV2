@@ -24,7 +24,7 @@
     <nav class="mr-nav">${links.map(([href, icon, label]) => `
       <a href="${href}" class="${href === active ? 'active' : ''}">
         <span class="mr-icon">${icon}</span><span class="mr-text">${label}</span>
-        ${href === '/' ? `<span class="mr-count">${document.querySelectorAll('.user-card-item').length}</span>` : ''}
+        ${href === '/' ? '<span class="mr-count" data-user-count>…</span>' : ''}
       </a>`).join('')}
     </nav>
     <div class="mr-label">БЫСТРО</div>
@@ -115,6 +115,20 @@
     }
     if (params.has('focus')) field.focus();
   }
+
+  fetch('/nav-count', { cache: 'no-store' })
+    .then((response) => {
+      if (!response.ok) throw new Error('navigation count unavailable');
+      return response.json();
+    })
+    .then((data) => {
+      const count = rail.querySelector('[data-user-count]');
+      if (count && Number.isInteger(data.users)) count.textContent = String(data.users);
+    })
+    .catch(() => {
+      const count = rail.querySelector('[data-user-count]');
+      if (count) count.textContent = '—';
+    });
 
   fetch('/health', { cache: 'no-store' })
     .then((response) => {

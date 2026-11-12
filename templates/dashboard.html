@@ -9,6 +9,7 @@
 
 <meta name="csrf-token" content="{{ csrf_token() }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='panel-v2.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='panel-cosmic.css', v=4) }}">
 <script defer src="{{ url_for('static', filename='panel-v2.js') }}"></script>
 </head><body><main class="container"><header class="head"><div><div class="eyebrow">ЦЕНТР УПРАВЛЕНИЯ · СЕГОДНЯ</div><h1>Сеть под контролем.</h1><div class="muted">Пользователи, VPS-источники и быстрые действия — одним взглядом.</div></div><a class="btn" href="{{ url_for('sources_page') }}">⌘ Открыть диагностику</a></header>
 <div class="grid stats"><div class="stat"><small>Все пользователи</small><b>{{ total_users }}</b><span>в панели</span></div><div class="stat"><small>Активные подписки</small><b>{{ active_users }} <span>/ {{ total_users }}</span></b><span>включены</span></div><div class="stat"><small>Уникальные VPS</small><b>{{ source_count }}</b><span>источников подписки</span></div><div class="stat"><small>Доступны</small><b>{{ healthy_sources }} <span>/ {{ source_count }}</span></b><span>по последней проверке</span></div></div>

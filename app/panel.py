@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from functools import wraps
 from urllib.parse import quote, unquote, urlsplit
+from zoneinfo import ZoneInfo
 import requests
 
 from flask import (
@@ -235,15 +236,21 @@ def valid_source_url(value):
     )
 
 
-def _public_source_host(hostname):
+def _public_source_addresses(hostname):
     try:
         addresses = {
             ipaddress.ip_address(item[4][0])
             for item in socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
         }
     except (OSError, ValueError):
-        return False
-    return bool(addresses) and all(address.is_global for address in addresses)
+        return []
+    if not addresses or not all(address.is_global for address in addresses):
+        return []
+    return [str(address) for address in sorted(addresses, key=lambda value: (value.version, int(value)))]
+
+
+def _public_source_host(hostname):
+    return bool(_public_source_addresses(hostname))
 
 
 def _connections_from_payload(payload):
@@ -311,7 +318,7 @@ def _label_connection(connection, source_kind):
 
 def append_log_events(events):
     """Append a related group of sanitized events without interleaving workers."""
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     lines = []
     for level, message in events:
         timestamp = now.strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
@@ -486,11 +493,19 @@ def log_subscription_request(token, diagnostics, connection_count, cached=False)
 
 @app.before_request
 def require_login():
+    host = (request.host or "").split(":", 1)[0].lower()
+    if host in {"linebase.ru", "www.linebase.ru"}:
+        if request.path != "/":
+            abort(404)
+        return
+
+    if request.path == "/p" or request.path.startswith("/p/"):
+        abort(404)
+
     public_endpoints = {
         "login",
         "health",
         "static",
-        "public_user_page",
         "subscription",
     }
 
@@ -624,8 +639,9 @@ def check_source(source):
     if not valid_source_url(source):
         return {"status": "blocked", "http_status": None, "latency_ms": None}
     hostname = urlsplit(source).hostname or ""
-    if not _public_source_host(hostname):
-        return {"status": "blocked", "http_status": None, "latency_ms": None}
+    resolved_ips = _public_source_addresses(hostname)
+    if not resolved_ips:
+        return {"status": "blocked", "http_status": None, "latency_ms": None, "resolved_ips": []}
 
     started = time.perf_counter()
     try:
@@ -642,12 +658,14 @@ def check_source(source):
             "status": "ok" if 200 <= http_status < 300 else "error",
             "http_status": http_status,
             "latency_ms": round((time.perf_counter() - started) * 1000),
+            "resolved_ips": resolved_ips,
         }
     except requests.RequestException:
         return {
             "status": "error",
             "http_status": None,
             "latency_ms": round((time.perf_counter() - started) * 1000),
+            "resolved_ips": resolved_ips,
         }
 
 
@@ -675,6 +693,13 @@ def _atomic_save_json(path, value):
 
 @app.route("/")
 def index():
+    host = (request.host or "").split(":", 1)[0].lower()
+    if host in {"linebase.ru", "www.linebase.ru"}:
+        return redirect(
+            "https://youtu.be/FzAZwn2fu2w?si=FD_mOWIa0dSH8vIZ",
+            code=302,
+        )
+
     users = load_users()
 
     items = []
@@ -742,6 +767,7 @@ def sources_page():
     users = load_users()
     health = load_source_health()
     records = {}
+    resolved_ip_cache = {}
     for data in users.values():
         name = data.get("name", "Пользователь")
         sources = list(data.get("sources", []) or []) + list(data.get("public_sources", []) or [])
@@ -751,11 +777,19 @@ def sources_page():
             if not isinstance(source, str):
                 continue
             key = source_key(source)
+            if key not in resolved_ip_cache:
+                source_health = health.get(key, {})
+                cached_ips = source_health.get("resolved_ips") if isinstance(source_health, dict) else None
+                resolved_ip_cache[key] = cached_ips if isinstance(cached_ips, list) else (
+                    _public_source_addresses(source_host(source))
+                    if valid_source_url(source) else []
+                )
             record = records.setdefault(
                 key,
                 {
                     "key": key,
                     "host": source_host(source),
+                    "ips": resolved_ip_cache[key],
                     "users": [],
                     "health": health.get(key, {}),
                 },
@@ -908,6 +942,15 @@ def logs_page():
 
         if match:
             timestamp, log_level, message = match.groups()
+            try:
+                parsed_timestamp = datetime.strptime(
+                    timestamp, "%Y-%m-%d %H:%M:%S,%f"
+                ).replace(tzinfo=timezone.utc)
+                timestamp = parsed_timestamp.astimezone(
+                    ZoneInfo("Asia/Krasnoyarsk")
+                ).strftime("%Y-%m-%d %H:%M:%S,%f")[:-3]
+            except ValueError:
+                pass
         else:
             timestamp, log_level, message = "", "INFO", text
 
@@ -1042,31 +1085,15 @@ def health():
     return "OK", 200
 
 
-@app.route("/p/<token>")
-def public_user_page(token):
-    user = load_users().get(token)
-    if not user or not user.get("enabled", False):
-        abort(404)
-    sources = user.get("sources", [])
-    public_sources = user.get("public_sources", [])
-    sources = sources if isinstance(sources, list) else []
-    public_sources = public_sources if isinstance(public_sources, list) else []
-    connections = get_user_connections(
-        token,
-        sources + public_sources,
-        source_kinds=["personal"] * len(sources) + ["public"] * len(public_sources),
+@app.route("/nav-count")
+def nav_count():
+    response = Response(
+        json.dumps({"users": len(load_users())}),
+        status=200,
+        content_type="application/json; charset=utf-8",
     )
-    subscription_url = (
-        f"{SUBSCRIPTION_BASE_URL}/s/{token}"
-        if SUBSCRIPTION_BASE_URL
-        else url_for("subscription", token=token, _external=True)
-    )
-    return render_template(
-        "public_user.html",
-        user={"name": user.get("name", token[:8]), "enabled": True, "sources": sources + public_sources},
-        connections=connections,
-        subscription_url=subscription_url,
-    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.route("/s/<token>")
