@@ -1248,7 +1248,7 @@ function submitBulkAdd() {
     }
 
     const form = document.getElementById("bulkAddForm");
-    form.querySelectorAll("input").forEach(x => x.remove());
+    form.querySelectorAll('input[name="user_token"]').forEach(x => x.remove());
 
     selected.forEach(box => {
         const input = document.createElement("input");
